@@ -60,6 +60,9 @@ jobs:
           cp domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java \
              /tmp/bypass-backup/DoLicenseCheckTest.java
 
+          cp presentation/src/main/java/org/cryptomator/presentation/licensing/LicenseEnforcer.kt \
+             /tmp/bypass-backup/LicenseEnforcer.kt
+
           echo "✅ File bypass berhasil dicadangkan."
 
       - name: Merge perubahan dari upstream (strategi ours untuk konflik)
@@ -88,13 +91,17 @@ jobs:
           cp /tmp/bypass-backup/DoLicenseCheckTest.java \
              domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java
 
+          cp /tmp/bypass-backup/LicenseEnforcer.kt \
+             presentation/src/main/java/org/cryptomator/presentation/licensing/LicenseEnforcer.kt
+
           echo "✅ File bypass berhasil dipulihkan."
 
       - name: Commit pemulihan file bypass (jika ada perubahan)
         run: |
           git add \
             domain/src/main/java/org/cryptomator/domain/usecases/DoLicenseCheck.java \
-            domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java
+            domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java \
+            presentation/src/main/java/org/cryptomator/presentation/licensing/LicenseEnforcer.kt
 
           if git diff --cached --quiet; then
             echo "ℹ️  Tidak ada perubahan pada file bypass, skip commit."

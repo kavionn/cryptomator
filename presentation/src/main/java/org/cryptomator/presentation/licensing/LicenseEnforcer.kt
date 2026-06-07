@@ -37,13 +37,13 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasWriteAccess(): Boolean {
-		return hasPaidLicense() || hasActiveTrial()
+		// Bypass: selalu punya akses tulis
+		return true
 	}
 
 	fun hasPaidLicense() =
-		FlavorConfig.isPremiumFlavor ||
-			sharedPreferencesHandler.licenseToken().isNotEmpty() ||
-			sharedPreferencesHandler.hasRunningSubscription()
+		// Bypass: selalu dianggap sudah bayar
+		true
 
 	fun startTrial() {
 		if (sharedPreferencesHandler.trialExpirationDate() > 0) {
@@ -87,12 +87,12 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 
 	fun evaluateUiState(): LicenseUiState {
 		val trialState = evaluateTrialState()
-		val paidLicense = hasPaidLicense()
 		return LicenseUiState(
-			hasWriteAccess = paidLicense || trialState.isActive,
-			hasPaidLicense = paidLicense,
-			hasLifetimeLicense = sharedPreferencesHandler.licenseToken().isNotEmpty(),
-			hasRunningSubscription = sharedPreferencesHandler.hasRunningSubscription(),
+			// Bypass: semua status aktif
+			hasWriteAccess = true,
+			hasPaidLicense = true,
+			hasLifetimeLicense = true,
+			hasRunningSubscription = true,
 			trialState = trialState
 		)
 	}
@@ -111,10 +111,8 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasWriteAccessForVault(vault: VaultModel?): Boolean {
-		if (vault?.isHubVault == true) {
-			return vault.hasHubPaidLicense || hasWriteAccess()
-		}
-		return hasWriteAccess()
+		// Bypass: selalu punya akses tulis untuk semua vault
+		return true
 	}
 
 	fun ensureWriteAccessForVault(activity: Activity, vault: VaultModel?, action: LockedAction): Boolean {
