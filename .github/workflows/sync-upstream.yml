@@ -1,0 +1,108 @@
+name: 🔄 Sync Upstream
+
+on:
+  schedule:
+    # Setiap hari pukul 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Branch upstream yang ingin disync'
+        required: false
+        default: 'main'
+
+# Hanya izinkan satu job sync berjalan sekaligus
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Sync dari cryptomator/android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo kamu
+        uses: actions/checkout@v4
+        with:
+          # Checkout full history agar merge berjalan mulus
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Konfigurasi Git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tambah remote upstream
+        run: |
+          git remote add upstream https://github.com/cryptomator/android.git || true
+          git fetch upstream
+
+      - name: Tentukan branch upstream yang digunakan
+        id: branch
+        run: |
+          BRANCH="${{ github.event.inputs.upstream_branch || 'main' }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────────
+      # PENTING: Simpan dulu kedua file bypass SEBELUM merge/rebase
+      # ─────────────────────────────────────────────────────────────
+      - name: Cadangkan file bypass lisensi
+        run: |
+          mkdir -p /tmp/bypass-backup
+
+          cp domain/src/main/java/org/cryptomator/domain/usecases/DoLicenseCheck.java \
+             /tmp/bypass-backup/DoLicenseCheck.java
+
+          cp domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java \
+             /tmp/bypass-backup/DoLicenseCheckTest.java
+
+          echo "✅ File bypass berhasil dicadangkan."
+
+      - name: Merge perubahan dari upstream (strategi ours untuk konflik)
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+
+          # Coba merge; jika konflik, pakai versi kita untuk file yang bertabrakan
+          if ! git merge upstream/"$BRANCH" \
+                --no-edit \
+                --strategy-option=theirs \
+                -m "chore: sync upstream cryptomator/android@$BRANCH [ci skip]"; then
+            echo "⚠️  Merge conflict terdeteksi, mencoba resolve otomatis..."
+            git checkout --theirs . || true
+            git add -A
+            git commit -m "chore: sync upstream (auto-resolve conflict) [ci skip]" || true
+          fi
+
+      # ─────────────────────────────────────────────────────────────
+      # Pulihkan file bypass SETELAH merge
+      # ─────────────────────────────────────────────────────────────
+      - name: Pulihkan file bypass lisensi
+        run: |
+          cp /tmp/bypass-backup/DoLicenseCheck.java \
+             domain/src/main/java/org/cryptomator/domain/usecases/DoLicenseCheck.java
+
+          cp /tmp/bypass-backup/DoLicenseCheckTest.java \
+             domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java
+
+          echo "✅ File bypass berhasil dipulihkan."
+
+      - name: Commit pemulihan file bypass (jika ada perubahan)
+        run: |
+          git add \
+            domain/src/main/java/org/cryptomator/domain/usecases/DoLicenseCheck.java \
+            domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java
+
+          if git diff --cached --quiet; then
+            echo "ℹ️  Tidak ada perubahan pada file bypass, skip commit."
+          else
+            git commit -m "chore: restore license bypass after upstream sync [ci skip]"
+          fi
+
+      - name: Push hasil sync ke repo
+        run: |
+          git push origin HEAD
+          echo "🚀 Sync selesai dan berhasil dipush!"

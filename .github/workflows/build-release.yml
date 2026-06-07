@@ -1,0 +1,216 @@
+name: 🏗️ Build & Release APK
+
+on:
+  # ── Auto-trigger saat ada tag baru (format: v1.2.3 atau 1.2.3) ──
+  push:
+    tags:
+      - 'v*.*.*'
+      - '[0-9]+.[0-9]+.[0-9]*'
+
+  # ── Trigger manual dari tab Actions ──
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Jenis build'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+      create_release:
+        description: 'Buat GitHub Release?'
+        required: true
+        default: 'false'
+        type: boolean
+      release_tag:
+        description: 'Tag untuk release (kosongkan = pakai commit SHA)'
+        required: false
+        default: ''
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # ──────────────────────────────────────────────
+      # 1. Checkout
+      # ──────────────────────────────────────────────
+      - name: Checkout kode
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      # ──────────────────────────────────────────────
+      # 2. Setup Java 17
+      # ──────────────────────────────────────────────
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      # ──────────────────────────────────────────────
+      # 3. Pastikan file bypass tidak tertimpa
+      # ──────────────────────────────────────────────
+      - name: Verifikasi file bypass lisensi
+        run: |
+          MAIN_FILE="domain/src/main/java/org/cryptomator/domain/usecases/DoLicenseCheck.java"
+          TEST_FILE="domain/src/test/java/org/cryptomator/domain/usecases/DoLicenseCheckTest.java"
+
+          echo "=== Mengecek file bypass ==="
+
+          if grep -q "BYPASS_MAIL" "$MAIN_FILE"; then
+            echo "✅ DoLicenseCheck.java — bypass aktif"
+          else
+            echo "❌ PERINGATAN: DoLicenseCheck.java tidak mengandung bypass!"
+            exit 1
+          fi
+
+          if grep -q "BypassTokenAcceptance\|BYPASS_MAIL\|user@example.com" "$TEST_FILE"; then
+            echo "✅ DoLicenseCheckTest.java — test bypass aktif"
+          else
+            echo "❌ PERINGATAN: DoLicenseCheckTest.java tidak sesuai bypass!"
+            exit 1
+          fi
+
+      # ──────────────────────────────────────────────
+      # 4. Tentukan versi & jenis build
+      # ──────────────────────────────────────────────
+      - name: Tentukan versi dan tipe build
+        id: meta
+        run: |
+          # Cek apakah trigger dari tag
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            BUILD_TYPE="release"
+            IS_RELEASE="true"
+          else
+            # Trigger manual
+            BUILD_TYPE="${{ github.event.inputs.release_type || 'debug' }}"
+            IS_RELEASE="${{ github.event.inputs.create_release || 'false' }}"
+            RAW_TAG="${{ github.event.inputs.release_tag }}"
+            VERSION="${RAW_TAG:-manual-$(echo ${{ github.sha }} | cut -c1-7)}"
+          fi
+
+          echo "version=$VERSION"         >> "$GITHUB_OUTPUT"
+          echo "build_type=$BUILD_TYPE"   >> "$GITHUB_OUTPUT"
+          echo "is_release=$IS_RELEASE"   >> "$GITHUB_OUTPUT"
+
+          echo "──────────────────────────────────"
+          echo "  Versi    : $VERSION"
+          echo "  Tipe     : $BUILD_TYPE"
+          echo "  Release  : $IS_RELEASE"
+          echo "──────────────────────────────────"
+
+      # ──────────────────────────────────────────────
+      # 5. Grant permission gradlew
+      # ──────────────────────────────────────────────
+      - name: Grant execute permission untuk gradlew
+        run: chmod +x gradlew
+
+      # ──────────────────────────────────────────────
+      # 6. Build APK
+      # ──────────────────────────────────────────────
+      - name: Build APK (${{ steps.meta.outputs.build_type }})
+        run: |
+          BUILD_TYPE="${{ steps.meta.outputs.build_type }}"
+
+          if [[ "$BUILD_TYPE" == "release" ]]; then
+            echo "🔨 Building release APK (unsigned)..."
+            ./gradlew assembleApkstoreRelease --stacktrace --no-daemon \
+              -PversionName="${{ steps.meta.outputs.version }}"
+          else
+            echo "🔨 Building debug APK..."
+            ./gradlew assembleApkstoreDebug --stacktrace --no-daemon \
+              -PversionName="${{ steps.meta.outputs.version }}"
+          fi
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2g"
+
+      # ──────────────────────────────────────────────
+      # 7. Cari & rename APK hasil build
+      # ──────────────────────────────────────────────
+      - name: Kumpulkan APK hasil build
+        id: apk
+        run: |
+          BUILD_TYPE="${{ steps.meta.outputs.build_type }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+
+          # Cari semua APK yang dihasilkan
+          APK_PATH=$(find . -name "*.apk" \
+            -path "*/apkstore/*" \
+            ! -path "*/test*" \
+            | head -1)
+
+          if [[ -z "$APK_PATH" ]]; then
+            # Fallback: cari semua APK
+            APK_PATH=$(find . -name "*.apk" ! -path "*/test*" | head -1)
+          fi
+
+          if [[ -z "$APK_PATH" ]]; then
+            echo "❌ Tidak ada APK yang ditemukan!"
+            find . -name "*.apk" || true
+            exit 1
+          fi
+
+          # Rename dengan versi yang jelas
+          APK_NAME="cryptomator-${VERSION}-${BUILD_TYPE}.apk"
+          cp "$APK_PATH" "$APK_NAME"
+
+          echo "apk_path=$APK_NAME"  >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME"  >> "$GITHUB_OUTPUT"
+          echo "✅ APK siap: $APK_NAME (dari $APK_PATH)"
+
+      # ──────────────────────────────────────────────
+      # 8. Upload artifact (selalu tersimpan)
+      # ──────────────────────────────────────────────
+      - name: Upload APK sebagai artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.build_type }}
+          path: ${{ steps.apk.outputs.apk_path }}
+          retention-days: 30
+
+      # ──────────────────────────────────────────────
+      # 9. Buat GitHub Release (hanya jika diperlukan)
+      # ──────────────────────────────────────────────
+      - name: Buat GitHub Release
+        if: steps.meta.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: "Cryptomator Android ${{ steps.meta.outputs.version }}"
+          body: |
+            ## 🚀 Cryptomator Android ${{ steps.meta.outputs.version }}
+
+            > **Build otomatis** dari tag `${{ steps.meta.outputs.version }}`
+            > Lisensi **bypass** aktif — tidak memerlukan lisensi untuk digunakan.
+
+            ### 📦 File
+            | File | Keterangan |
+            |------|-----------|
+            | `${{ steps.apk.outputs.apk_name }}` | APK siap install (unsigned) |
+
+            ### ℹ️ Catatan
+            - APK ini **unsigned** — perlu di-sign manual jika ingin distribusi production.
+            - Untuk install di perangkat: aktifkan "Sumber tidak dikenal" di pengaturan.
+
+            ---
+            **Commit**: `${{ github.sha }}`
+            **Build**: `${{ github.run_id }}`
+          files: ${{ steps.apk.outputs.apk_path }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
