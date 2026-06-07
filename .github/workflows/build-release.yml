@@ -102,9 +102,9 @@ jobs:
             VERSION="${RAW_TAG:-manual-$(echo ${{ github.sha }} | cut -c1-7)}"
           fi
 
-          echo "version=$VERSION"         >> "$GITHUB_OUTPUT"
-          echo "build_type=$BUILD_TYPE"   >> "$GITHUB_OUTPUT"
-          echo "is_release=$IS_RELEASE"   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
+          echo "build_type=$BUILD_TYPE" >> "$GITHUB_OUTPUT"
+          echo "is_release=$IS_RELEASE" >> "$GITHUB_OUTPUT"
 
           echo "──────────────────────────────────"
           echo "  Versi    : $VERSION"
@@ -138,22 +138,21 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2g"
 
       # ──────────────────────────────────────────────
-      # 7. Cari & rename APK hasil build
+      # 7. Cari APK hasil build
       # ──────────────────────────────────────────────
       - name: Kumpulkan APK hasil build
         id: apk
         run: |
-          BUILD_TYPE="${{ steps.meta.outputs.build_type }}"
           VERSION="${{ steps.meta.outputs.version }}"
+          BUILD_TYPE="${{ steps.meta.outputs.build_type }}"
 
-          # Cari semua APK yang dihasilkan
+          # Cari APK yang dihasilkan
           APK_PATH=$(find . -name "*.apk" \
             -path "*/apkstore/*" \
             ! -path "*/test*" \
             | head -1)
 
           if [[ -z "$APK_PATH" ]]; then
-            # Fallback: cari semua APK
             APK_PATH=$(find . -name "*.apk" ! -path "*/test*" | head -1)
           fi
 
@@ -163,26 +162,98 @@ jobs:
             exit 1
           fi
 
-          # Rename dengan versi yang jelas
-          APK_NAME="cryptomator-${VERSION}-${BUILD_TYPE}.apk"
-          cp "$APK_PATH" "$APK_NAME"
-
-          echo "apk_path=$APK_NAME"  >> "$GITHUB_OUTPUT"
-          echo "apk_name=$APK_NAME"  >> "$GITHUB_OUTPUT"
-          echo "✅ APK siap: $APK_NAME (dari $APK_PATH)"
+          echo "apk_source=$APK_PATH"   >> "$GITHUB_OUTPUT"
+          echo "✅ APK ditemukan: $APK_PATH"
 
       # ──────────────────────────────────────────────
-      # 8. Upload artifact (selalu tersimpan)
+      # 8. Sign APK
+      #    - Release : pakai keystore dari GitHub Secret
+      #    - Debug   : pakai debug.keystore bawaan repo
+      # ──────────────────────────────────────────────
+      - name: Sign APK (release)
+        id: sign_release
+        if: steps.meta.outputs.build_type == 'release'
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          APK_SRC="${{ steps.apk.outputs.apk_source }}"
+          APK_SIGNED="cryptomator-${VERSION}-release-signed.apk"
+
+          # Decode keystore dari secret (base64)
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > /tmp/release.keystore
+
+          # Sign menggunakan apksigner (sudah tersedia di Android SDK)
+          ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | tail -1)/apksigner sign \
+            --ks /tmp/release.keystore \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --ks-pass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+            --out "$APK_SIGNED" \
+            "$APK_SRC"
+
+          echo "apk_final=$APK_SIGNED" >> "$GITHUB_OUTPUT"
+          echo "✅ APK release berhasil di-sign: $APK_SIGNED"
+
+          # Hapus keystore dari filesystem setelah dipakai
+          rm -f /tmp/release.keystore
+
+      - name: Sign APK (debug)
+        id: sign_debug
+        if: steps.meta.outputs.build_type == 'debug'
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          APK_SRC="${{ steps.apk.outputs.apk_source }}"
+          APK_SIGNED="cryptomator-${VERSION}-debug-signed.apk"
+
+          # Sign menggunakan debug.keystore bawaan repo
+          ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | tail -1)/apksigner sign \
+            --ks presentation/debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$APK_SIGNED" \
+            "$APK_SRC"
+
+          echo "apk_final=$APK_SIGNED" >> "$GITHUB_OUTPUT"
+          echo "✅ APK debug berhasil di-sign: $APK_SIGNED"
+
+      # ──────────────────────────────────────────────
+      # 9. Gabungkan output path APK final
+      # ──────────────────────────────────────────────
+      - name: Tentukan path APK final
+        id: final
+        run: |
+          BUILD_TYPE="${{ steps.meta.outputs.build_type }}"
+          if [[ "$BUILD_TYPE" == "release" ]]; then
+            APK="${{ steps.sign_release.outputs.apk_final }}"
+          else
+            APK="${{ steps.sign_debug.outputs.apk_final }}"
+          fi
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "✅ APK final: $APK"
+
+      # ──────────────────────────────────────────────
+      # 10. Verifikasi signature APK
+      # ──────────────────────────────────────────────
+      - name: Verifikasi signature APK
+        run: |
+          APK="${{ steps.final.outputs.apk }}"
+          echo "=== Verifikasi Signature ==="
+          ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | tail -1)/apksigner verify \
+            --verbose "$APK" 2>&1 | head -20
+          echo "✅ Verifikasi selesai"
+
+      # ──────────────────────────────────────────────
+      # 11. Upload artifact (selalu tersimpan)
       # ──────────────────────────────────────────────
       - name: Upload APK sebagai artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.build_type }}
-          path: ${{ steps.apk.outputs.apk_path }}
+          path: ${{ steps.final.outputs.apk }}
           retention-days: 30
 
       # ──────────────────────────────────────────────
-      # 9. Buat GitHub Release (hanya jika diperlukan)
+      # 12. Buat GitHub Release (hanya jika diperlukan)
       # ──────────────────────────────────────────────
       - name: Buat GitHub Release
         if: steps.meta.outputs.is_release == 'true'
@@ -199,16 +270,21 @@ jobs:
             ### 📦 File
             | File | Keterangan |
             |------|-----------|
-            | `${{ steps.apk.outputs.apk_name }}` | APK siap install (unsigned) |
+            | `${{ steps.final.outputs.apk }}` | APK signed, siap install |
 
-            ### ℹ️ Catatan
-            - APK ini **unsigned** — perlu di-sign manual jika ingin distribusi production.
-            - Untuk install di perangkat: aktifkan "Sumber tidak dikenal" di pengaturan.
+            ### ✅ Signing Info
+            - Build **release**: signed dengan keystore dari GitHub Secrets
+            - Build **debug**: signed dengan `debug.keystore` bawaan repo
+
+            ### ℹ️ Cara Install
+            1. Download APK di bawah
+            2. Aktifkan "Sumber tidak dikenal" di pengaturan Android
+            3. Install APK
 
             ---
             **Commit**: `${{ github.sha }}`
             **Build**: `${{ github.run_id }}`
-          files: ${{ steps.apk.outputs.apk_path }}
+          files: ${{ steps.final.outputs.apk }}
           draft: false
           prerelease: false
           generate_release_notes: false
