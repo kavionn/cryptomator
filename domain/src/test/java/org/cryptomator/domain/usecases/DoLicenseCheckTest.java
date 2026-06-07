@@ -1,6 +1,5 @@
 package org.cryptomator.domain.usecases;
 
-import org.cryptomator.domain.exception.license.NoLicenseAvailableException;
 import org.cryptomator.util.SharedPreferencesHandler;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -24,13 +23,15 @@ public class DoLicenseCheckTest {
 	class LicenseRetrieval {
 
 		@Test
-		@DisplayName("Empty license + empty preference throws NoLicenseAvailableException")
-		void emptyLicenseAndEmptyPreference() {
+		@DisplayName("Empty license + empty preference langsung aktif (bypass total)")
+		void emptyLicenseAndEmptyPreference() throws Exception {
 			when(sharedPreferencesHandler.licenseToken()).thenReturn("");
 
 			DoLicenseCheck inTest = testCandidate("");
 
-			assertThrows(NoLicenseAvailableException.class, inTest::execute);
+			LicenseCheck result = inTest.execute();
+			assertThat(result.mail(), is("user@example.com"));
+			verify(sharedPreferencesHandler).setLicenseToken("bypass-active");
 		}
 
 		@Test

@@ -1,7 +1,6 @@
 package org.cryptomator.domain.usecases;
 
 import org.cryptomator.domain.exception.BackendException;
-import org.cryptomator.domain.exception.license.NoLicenseAvailableException;
 import org.cryptomator.generator.Parameter;
 import org.cryptomator.generator.UseCase;
 import org.cryptomator.util.SharedPreferencesHandler;
@@ -10,6 +9,7 @@ import org.cryptomator.util.SharedPreferencesHandler;
 public class DoLicenseCheck {
 
 	private static final String BYPASS_MAIL = "user@example.com";
+	private static final String BYPASS_TOKEN = "bypass-active";
 
 	private final SharedPreferencesHandler sharedPreferencesHandler;
 	private String license;
@@ -26,14 +26,15 @@ public class DoLicenseCheck {
 		return () -> BYPASS_MAIL;
 	}
 
-	private String useLicenseOrRetrieveFromPreferences(String license) throws NoLicenseAvailableException {
+	private String useLicenseOrRetrieveFromPreferences(String license) {
 		if (!license.isEmpty()) {
 			return license;
 		}
 		String stored = sharedPreferencesHandler.licenseToken();
-		if (stored.isEmpty()) {
-			throw new NoLicenseAvailableException();
+		if (!stored.isEmpty()) {
+			return stored;
 		}
-		return stored;
+		// Bypass: tidak perlu lisensi, pakai token dummy agar langsung aktif
+		return BYPASS_TOKEN;
 	}
 }
