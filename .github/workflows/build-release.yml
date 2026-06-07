@@ -99,7 +99,24 @@ jobs:
             BUILD_TYPE="${{ github.event.inputs.release_type || 'debug' }}"
             IS_RELEASE="${{ github.event.inputs.create_release || 'false' }}"
             RAW_TAG="${{ github.event.inputs.release_tag }}"
-            VERSION="${RAW_TAG:-manual-$(echo ${{ github.sha }} | cut -c1-7)}"
+
+            if [[ -z "$RAW_TAG" ]]; then
+              echo "🔍 Tag kosong, mengambil tag terbaru dari upstream cryptomator/android..."
+              UPSTREAM_TAG=$(curl -sf \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/cryptomator/android/tags" \
+                | grep '"name"' | head -1 | sed 's/.*"name": *"//;s/".*//')
+
+              if [[ -z "$UPSTREAM_TAG" ]]; then
+                echo "⚠️  Gagal fetch tag upstream, fallback ke commit SHA"
+                VERSION="manual-$(echo ${{ github.sha }} | cut -c1-7)"
+              else
+                echo "✅ Tag upstream ditemukan: $UPSTREAM_TAG"
+                VERSION="$UPSTREAM_TAG"
+              fi
+            else
+              VERSION="$RAW_TAG"
+            fi
           fi
 
           echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
