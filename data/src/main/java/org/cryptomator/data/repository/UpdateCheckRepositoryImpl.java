@@ -3,34 +3,26 @@ package org.cryptomator.data.repository;
 import android.content.Context;
 import android.net.Uri;
 
-import com.auth0.jwt.JWT;
-import com.auth0.jwt.algorithms.Algorithm;
-import com.auth0.jwt.interfaces.DecodedJWT;
-import com.auth0.jwt.interfaces.JWTVerifier;
 import com.google.common.base.Optional;
-import com.google.common.io.BaseEncoding;
 
 import org.apache.commons.codec.binary.Hex;
 import org.cryptomator.data.db.Database;
 import org.cryptomator.data.db.entities.UpdateCheckEntity;
 import org.cryptomator.data.util.UserAgentInterceptor;
 import org.cryptomator.domain.exception.BackendException;
-import org.cryptomator.domain.exception.FatalBackendException;
 import org.cryptomator.domain.exception.update.GeneralUpdateErrorException;
 import org.cryptomator.domain.exception.update.HashMismatchUpdateCheckException;
 import org.cryptomator.domain.repository.UpdateCheckRepository;
 import org.cryptomator.domain.usecases.UpdateCheck;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
 import java.security.DigestInputStream;
-import java.security.Key;
-import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.X509EncodedKeySpec;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -45,7 +37,8 @@ import okio.Okio;
 @Singleton
 public class UpdateCheckRepositoryImpl implements UpdateCheckRepository {
 
-	private static final String HOSTNAME_LATEST_VERSION = "https://api.cryptomator.org/android/latest-version.json";
+	// GitHub Releases API — mengambil informasi rilis terbaru dari repo ini
+	private static final String GITHUB_RELEASES_API_URL = "https://api.github.com/repos/kavionn/cryptomator/releases/latest";
 
 	private final Database database;
 	private final OkHttpClient httpClient;
@@ -68,17 +61,19 @@ public class UpdateCheckRepositoryImpl implements UpdateCheckRepository {
 	public Optional<UpdateCheck> getUpdateCheck(final String appVersion) throws BackendException {
 		LatestVersion latestVersion = loadLatestVersion();
 
+		// Bandingkan versi. Tag GitHub seperti "v1.10.0" sudah di-strip prefix "v"-nya.
 		if (appVersion.equals(latestVersion.version)) {
 			return Optional.absent();
 		}
 
 		final UpdateCheckEntity entity = database.load(UpdateCheckEntity.class, 1L);
 
+		// Jika versi yang tersimpan di DB sama dengan versi terbaru, kembalikan cache
 		if (entity.getVersion() != null && entity.getVersion().equals(latestVersion.version) && entity.getApkSha256() != null) {
 			return Optional.of(new UpdateCheckImpl("", entity));
 		}
 
-		UpdateCheck updateCheck = loadUpdateStatus(latestVersion);
+		UpdateCheck updateCheck = buildUpdateCheck(latestVersion);
 		entity.setUrlToApk(updateCheck.getUrlApk());
 		entity.setVersion(updateCheck.getVersion());
 		entity.setApkSha256(updateCheck.getApkSha256());
@@ -104,14 +99,16 @@ public class UpdateCheckRepositoryImpl implements UpdateCheckRepository {
 					sink.writeAll(source);
 					sink.flush();
 
-					String apkSha256 = calculateSha256(file);
-
-					if (!apkSha256.equals(entity.getApkSha256())) {
-						file.delete();
-						throw new HashMismatchUpdateCheckException(String.format( //
-								"Sha of calculated hash (%s) doesn't match the specified one (%s)", //
-								apkSha256, //
-								entity.getApkSha256()));
+					// Verifikasi hash SHA-256 APK yang diunduh
+					if (entity.getApkSha256() != null && !entity.getApkSha256().isEmpty()) {
+						String apkSha256 = calculateSha256(file);
+						if (!apkSha256.equalsIgnoreCase(entity.getApkSha256())) {
+							file.delete();
+							throw new HashMismatchUpdateCheckException(String.format( //
+									"Sha of calculated hash (%s) doesn't match the specified one (%s)", //
+									apkSha256, //
+									entity.getApkSha256()));
+						}
 					}
 				}
 			} else {
@@ -136,59 +133,89 @@ public class UpdateCheckRepositoryImpl implements UpdateCheckRepository {
 		}
 	}
 
+	/**
+	 * Mengambil informasi rilis terbaru dari GitHub Releases API.
+	 * Mengharapkan aset rilis berupa:
+	 *   - cryptomator-<version>.apk           (file APK)
+	 *   - cryptomator-<version>.apk.sha256    (file hash, berisi hex SHA-256)
+	 */
 	private LatestVersion loadLatestVersion() throws BackendException {
 		try {
-			final Request request = new Request //
-					.Builder() //
-					.url(HOSTNAME_LATEST_VERSION) //
+			// 1. Ambil JSON rilis terbaru dari GitHub API
+			final Request request = new Request.Builder()
+					.url(GITHUB_RELEASES_API_URL)
+					.header("Accept", "application/vnd.github+json")
+					.header("X-GitHub-Api-Version", "2022-11-28")
 					.build();
-			return toLatestVersion(httpClient.newCall(request).execute());
-		} catch (IOException e) {
+
+			final Response response = httpClient.newCall(request).execute();
+			if (!response.isSuccessful() || response.body() == null) {
+				throw new GeneralUpdateErrorException("Failed to get latest release from GitHub. Status: " + response.code());
+			}
+
+			final JSONObject json = new JSONObject(response.body().string());
+
+			// Tag seperti "v1.10.0" → strip prefix "v" agar bisa dibandingkan dengan versionName app
+			final String version = json.getString("tag_name").replaceFirst("^[vV]", "");
+			final String releasePageUrl = json.getString("html_url");
+			// Catatan rilis dalam format Markdown dari body rilis GitHub
+			final String releaseBody = json.optString("body", "");
+
+			// 2. Cari URL APK dan file SHA256 di daftar aset rilis
+			final JSONArray assets = json.getJSONArray("assets");
+			String apkUrl = null;
+			String sha256FileUrl = null;
+
+			for (int i = 0; i < assets.length(); i++) {
+				final JSONObject asset = assets.getJSONObject(i);
+				final String name = asset.getString("name");
+				final String downloadUrl = asset.getString("browser_download_url");
+
+				if (name.endsWith(".apk")) {
+					apkUrl = downloadUrl;
+				} else if (name.endsWith(".sha256")) {
+					sha256FileUrl = downloadUrl;
+				}
+			}
+
+			if (apkUrl == null) {
+				throw new GeneralUpdateErrorException("No APK asset found in the latest GitHub release.");
+			}
+
+			// 3. Unduh konten file .sha256 jika tersedia
+			String apkSha256 = null;
+			if (sha256FileUrl != null) {
+				apkSha256 = fetchSha256FileContent(sha256FileUrl);
+			}
+
+			return new LatestVersion(version, apkUrl, apkSha256, releasePageUrl, releaseBody);
+
+		} catch (IOException | JSONException e) {
 			throw new GeneralUpdateErrorException("Failed to update. General error occurred.", e);
 		}
 	}
 
-	private UpdateCheck loadUpdateStatus(LatestVersion latestVersion) throws BackendException {
-		try {
-			final Request request = new Request //
-					.Builder() //
-					.url(latestVersion.urlReleaseNote) //
-					.build();
-			return toUpdateCheck(httpClient.newCall(request).execute(), latestVersion);
-		} catch (IOException e) {
-			throw new GeneralUpdateErrorException("Failed to update.  General error occurred.", e);
-		}
-	}
-
-	private LatestVersion toLatestVersion(Response response) throws IOException, GeneralUpdateErrorException {
+	/**
+	 * Mengunduh konten file .sha256 dan mengekstrak hash-nya.
+	 * File boleh berisi hanya hash ("abc123...") atau format standar ("abc123... filename.apk").
+	 */
+	private String fetchSha256FileContent(String sha256FileUrl) throws IOException {
+		final Request request = new Request.Builder().url(sha256FileUrl).build();
+		final Response response = httpClient.newCall(request).execute();
 		if (response.isSuccessful() && response.body() != null) {
-			return new LatestVersion(response.body().string());
-		} else {
-			throw new GeneralUpdateErrorException("Failed to update. Wrong status code in response from server: " + response.code());
+			// Ambil token pertama saja (hash hex), abaikan nama file di belakangnya
+			return response.body().string().trim().split("\\s+")[0];
 		}
+		return null;
 	}
 
-	private UpdateCheck toUpdateCheck(Response response, LatestVersion latestVersion) throws IOException, GeneralUpdateErrorException {
-		if (response.isSuccessful() && response.body() != null) {
-			final String releaseNote = response.body().string();
-			return new UpdateCheckImpl(releaseNote, latestVersion);
-		} else {
-			throw new GeneralUpdateErrorException("Failed to update. Wrong status code in response from server: " + response.code());
-		}
+	private UpdateCheck buildUpdateCheck(LatestVersion latestVersion) {
+		return new UpdateCheckImpl(latestVersion.releaseBody, latestVersion);
 	}
 
-	private ECPublicKey getPublicKey() throws NoSuchAlgorithmException, InvalidKeySpecException {
-		final byte[] publicKey = BaseEncoding //
-				.base64() //
-				.decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELOYa5ax7QZvS92HJYCBPBiR2wWfX" + "P9/Oq/yl2J1yg0Vovetp8i1A3yCtoqdHVdVytM1wNV0JXgRbWuNTAr9nlQ==");
-
-		Key key = KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(publicKey));
-		if (key instanceof ECPublicKey) {
-			return (ECPublicKey) key;
-		} else {
-			throw new FatalBackendException("Key not an EC public key.");
-		}
-	}
+	// -------------------------------------------------------------------------
+	// Inner classes
+	// -------------------------------------------------------------------------
 
 	private static class UpdateCheckImpl implements UpdateCheck {
 
@@ -240,26 +267,20 @@ public class UpdateCheckRepositoryImpl implements UpdateCheckRepository {
 		}
 	}
 
-	private class LatestVersion {
+	private static class LatestVersion {
 
 		private final String version;
 		private final String urlApk;
 		private final String apkSha256;
 		private final String urlReleaseNote;
+		private final String releaseBody;
 
-		LatestVersion(String json) throws GeneralUpdateErrorException {
-			try {
-				Algorithm algorithm = Algorithm.ECDSA256(getPublicKey(), null);
-				JWTVerifier verifier = JWT.require(algorithm).build();
-				DecodedJWT jwt = verifier.verify(json);
-
-				version = jwt.getClaim("version").asString();
-				urlApk = jwt.getClaim("url").asString();
-				apkSha256 = jwt.getClaim("apk_sha_256").asString();
-				urlReleaseNote = jwt.getClaim("release_notes").asString();
-			} catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
-				throw new GeneralUpdateErrorException("Failed to parse latest version", e);
-			}
+		LatestVersion(String version, String urlApk, String apkSha256, String urlReleaseNote, String releaseBody) {
+			this.version = version;
+			this.urlApk = urlApk;
+			this.apkSha256 = apkSha256;
+			this.urlReleaseNote = urlReleaseNote;
+			this.releaseBody = releaseBody;
 		}
 	}
 }

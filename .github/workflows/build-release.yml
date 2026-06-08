@@ -193,7 +193,7 @@ jobs:
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           APK_SRC="${{ steps.apk.outputs.apk_source }}"
-          APK_SIGNED="cryptomator-${VERSION}-release-signed.apk"
+          APK_SIGNED="cryptomator-${VERSION}.apk"
 
           # Decode keystore dari secret (base64)
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > /tmp/release.keystore
@@ -219,7 +219,7 @@ jobs:
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           APK_SRC="${{ steps.apk.outputs.apk_source }}"
-          APK_SIGNED="cryptomator-${VERSION}-debug-signed.apk"
+          APK_SIGNED="cryptomator-${VERSION}-debug.apk"
 
           # Sign menggunakan debug.keystore bawaan repo
           ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | tail -1)/apksigner sign \
@@ -247,6 +247,23 @@ jobs:
           fi
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
           echo "✅ APK final: $APK"
+
+      # ──────────────────────────────────────────────
+      # 10a. Generate SHA-256 checksum
+      #      File ini dibutuhkan oleh fitur "Periksa Pembaruan" di app
+      # ──────────────────────────────────────────────
+      - name: Generate SHA-256 checksum
+        id: sha256
+        run: |
+          APK="${{ steps.final.outputs.apk }}"
+          SHA256_FILE="${APK}.sha256"
+
+          # Hitung hash SHA-256 dan simpan hanya nilai hex-nya (tanpa nama file)
+          sha256sum "$APK" | awk '{print $1}' > "$SHA256_FILE"
+
+          echo "sha256_file=$SHA256_FILE" >> "$GITHUB_OUTPUT"
+          echo "✅ SHA-256 checksum:"
+          cat "$SHA256_FILE"
 
       # ──────────────────────────────────────────────
       # 10. Verifikasi signature APK
@@ -301,7 +318,9 @@ jobs:
             ---
             **Commit**: `${{ github.sha }}`
             **Build**: `${{ github.run_id }}`
-          files: ${{ steps.final.outputs.apk }}
+          files: |
+            ${{ steps.final.outputs.apk }}
+            ${{ steps.sha256.outputs.sha256_file }}
           draft: false
           prerelease: false
           generate_release_notes: false
