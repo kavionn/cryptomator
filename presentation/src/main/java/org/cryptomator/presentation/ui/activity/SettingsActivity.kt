@@ -101,7 +101,7 @@ class SettingsActivity : BaseActivity<ActivitySettingsBinding>(ActivitySettingsB
 	}
 
 	override fun showUpdateWebsite() {
-		val url = "https://cryptomator.org/android/"
+		val url = "https://github.com/kavionn/cryptomator/releases/latest"
 		val intent = Intent(Intent.ACTION_VIEW)
 		intent.data = Uri.parse(url)
 		startActivity(intent)
