@@ -66,7 +66,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasWriteAccess returns false when trial is expired`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(System.currentTimeMillis() - 1000L)
@@ -77,7 +77,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasWriteAccess returns false when no license and no trial and no subscription`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(0L)
@@ -100,7 +100,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasWriteAccessForVault returns false for non-hub vault without write access`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(0L)
@@ -121,7 +121,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasWriteAccessForVault returns false for hub vault without paid license and no local license`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		val vault: VaultModel = mock()
 		`when`(vault.isHubVault).thenReturn(true)
 		`when`(vault.hasHubPaidLicense).thenReturn(false)
@@ -181,7 +181,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasWriteAccessForVault returns false when vault is null and has no write access`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(0L)
@@ -203,7 +203,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `ensureWriteAccessForVault returns false for hub vault without paid license and no local license`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		val activity: Activity = mock()
 		val vault: VaultModel = mock()
 		`when`(vault.isHubVault).thenReturn(true)
@@ -241,7 +241,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasPaidLicense returns false when only trial is active`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(System.currentTimeMillis() + 86400000L)
@@ -251,7 +251,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `hasPaidLicense returns false when no license and no subscription`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 
@@ -439,7 +439,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `evaluateUiState returns active trial with expiration text`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(System.currentTimeMillis() + 86400000L)
@@ -455,7 +455,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `evaluateUiState returns expired trial with expiration date text`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(System.currentTimeMillis() - 1000L)
@@ -471,7 +471,7 @@ class LicenseEnforcerTest {
 
 	@Test
 	fun `evaluateUiState returns null expiration text when no trial started`() {
-		assumeTrue(!FlavorConfig.isPremiumFlavor, "Licensing logic is bypassed on this flavor")
+		assumeTrue(!FlavorConfig.isPremiumFlavor && !FlavorConfig.isApkStoreFlavor, "Licensing logic is bypassed on this flavor")
 		`when`(sharedPreferencesHandler.licenseToken()).thenReturn("")
 		`when`(sharedPreferencesHandler.hasRunningSubscription()).thenReturn(false)
 		`when`(sharedPreferencesHandler.trialExpirationDate()).thenReturn(0L)

@@ -9,7 +9,7 @@ on:
       upstream_branch:
         description: 'Branch upstream yang ingin disync'
         required: false
-        default: 'main'
+        default: 'develop'
 
 # Hanya izinkan satu job sync berjalan sekaligus
 concurrency:
@@ -44,7 +44,7 @@ jobs:
       - name: Tentukan branch upstream yang digunakan
         id: branch
         run: |
-          BRANCH="${{ github.event.inputs.upstream_branch || 'main' }}"
+          BRANCH="${{ github.event.inputs.upstream_branch || 'develop' }}"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
       # ─────────────────────────────────────────────────────────────

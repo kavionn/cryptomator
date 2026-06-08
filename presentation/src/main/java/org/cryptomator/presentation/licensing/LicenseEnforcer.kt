@@ -37,7 +37,7 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasWriteAccess(): Boolean {
-		if (FlavorConfig.isPremiumFlavor) return true
+		if (FlavorConfig.isPremiumFlavor || FlavorConfig.isApkStoreFlavor) return true
 		val hasLicenseToken = sharedPreferencesHandler.licenseToken().isNotEmpty()
 		val hasSubscription = sharedPreferencesHandler.hasRunningSubscription()
 		val hasActiveTrial = hasActiveTrial()
@@ -45,7 +45,7 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasPaidLicense(): Boolean {
-		if (FlavorConfig.isPremiumFlavor) return true
+		if (FlavorConfig.isPremiumFlavor || FlavorConfig.isApkStoreFlavor) return true
 		val hasLicenseToken = sharedPreferencesHandler.licenseToken().isNotEmpty()
 		val hasSubscription = sharedPreferencesHandler.hasRunningSubscription()
 		return hasLicenseToken || hasSubscription
@@ -93,11 +93,12 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 
 	fun evaluateUiState(): LicenseUiState {
 		val trialState = evaluateTrialState()
+		val isBypassed = FlavorConfig.isPremiumFlavor || FlavorConfig.isApkStoreFlavor
 		return LicenseUiState(
 			hasWriteAccess = hasWriteAccess(),
 			hasPaidLicense = hasPaidLicense(),
-			hasLifetimeLicense = sharedPreferencesHandler.licenseToken().isNotEmpty(),
-			hasRunningSubscription = sharedPreferencesHandler.hasRunningSubscription(),
+			hasLifetimeLicense = isBypassed || sharedPreferencesHandler.licenseToken().isNotEmpty(),
+			hasRunningSubscription = isBypassed || sharedPreferencesHandler.hasRunningSubscription(),
 			trialState = trialState
 		)
 	}
@@ -116,6 +117,7 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasWriteAccessForVault(vault: VaultModel?): Boolean {
+		if (FlavorConfig.isPremiumFlavor || FlavorConfig.isApkStoreFlavor) return true
 		if (vault?.isHubVault == true) {
 			return vault.hasHubPaidLicense || hasWriteAccess()
 		}
