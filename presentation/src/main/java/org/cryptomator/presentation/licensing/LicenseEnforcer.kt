@@ -37,13 +37,19 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasWriteAccess(): Boolean {
-		// Bypass: selalu punya akses tulis
-		return true
+		if (FlavorConfig.isPremiumFlavor) return true
+		val hasLicenseToken = sharedPreferencesHandler.licenseToken().isNotEmpty()
+		val hasSubscription = sharedPreferencesHandler.hasRunningSubscription()
+		val hasActiveTrial = hasActiveTrial()
+		return hasLicenseToken || hasSubscription || hasActiveTrial
 	}
 
-	fun hasPaidLicense() =
-		// Bypass: selalu dianggap sudah bayar
-		true
+	fun hasPaidLicense(): Boolean {
+		if (FlavorConfig.isPremiumFlavor) return true
+		val hasLicenseToken = sharedPreferencesHandler.licenseToken().isNotEmpty()
+		val hasSubscription = sharedPreferencesHandler.hasRunningSubscription()
+		return hasLicenseToken || hasSubscription
+	}
 
 	fun startTrial() {
 		if (sharedPreferencesHandler.trialExpirationDate() > 0) {
@@ -88,11 +94,10 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	fun evaluateUiState(): LicenseUiState {
 		val trialState = evaluateTrialState()
 		return LicenseUiState(
-			// Bypass: semua status aktif
-			hasWriteAccess = true,
-			hasPaidLicense = true,
-			hasLifetimeLicense = true,
-			hasRunningSubscription = true,
+			hasWriteAccess = hasWriteAccess(),
+			hasPaidLicense = hasPaidLicense(),
+			hasLifetimeLicense = sharedPreferencesHandler.licenseToken().isNotEmpty(),
+			hasRunningSubscription = sharedPreferencesHandler.hasRunningSubscription(),
 			trialState = trialState
 		)
 	}
@@ -111,8 +116,10 @@ class LicenseEnforcer @Inject constructor(private val sharedPreferencesHandler: 
 	}
 
 	fun hasWriteAccessForVault(vault: VaultModel?): Boolean {
-		// Bypass: selalu punya akses tulis untuk semua vault
-		return true
+		if (vault?.isHubVault == true) {
+			return vault.hasHubPaidLicense || hasWriteAccess()
+		}
+		return hasWriteAccess()
 	}
 
 	fun ensureWriteAccessForVault(activity: Activity, vault: VaultModel?, action: LockedAction): Boolean {
