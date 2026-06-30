@@ -13,6 +13,7 @@ version = get_version_name(
 version = version.delete "'"
 
 playstoreMetadataDir = "../src/playstore/fastlane/metadata/android/"
+playstoreiapMetadataDir = "../src/playstoreiap/fastlane/metadata/android/"
 fdroidMetadataDir = "../src/fdroid/fastlane/metadata/android/"
 liteMetadataDir = "../src/lite/fastlane/metadata/android/"
 changeLogSubPath = "changelogs/default.txt"
@@ -34,6 +35,7 @@ platform :android do |options|
     checkVersionCodeSet(alpha:options[:alpha], beta:options[:beta])
 
     deployToPlaystore(alpha:options[:alpha], beta:options[:beta])
+    deployToPlaystoreIap(alpha:options[:alpha], beta:options[:beta])
     deployToServer(alpha:options[:alpha], beta:options[:beta])
     deployToFDroid(alpha:options[:alpha], beta:options[:beta])
     deployLite(alpha:options[:alpha], beta:options[:beta])
@@ -54,7 +56,7 @@ platform :android do |options|
     puts "Make sure you run and commited updateMetadata before tagging and releasing!!!"
     puts "If check failed, run updateMetadata, commit/tag it and restart when finished"
 
-    metadataDirs = [playstoreMetadataDir, fdroidMetadataDir, liteMetadataDir]
+    metadataDirs = [playstoreMetadataDir, playstoreiapMetadataDir, fdroidMetadataDir, liteMetadataDir]
     for metadataDir in metadataDirs do
       sh("diff -s #{releaseNotePathDe} #{metadataDir}de-DE/#{changeLogSubPath} > /dev/null")
       sh("diff -s #{releaseNotePathEn} #{metadataDir}en-US/#{changeLogSubPath} > /dev/null")
@@ -64,7 +66,7 @@ platform :android do |options|
 
   desc "Update Metadata"
   lane :updateMetadata do |options|
-    metadataDirs = [playstoreMetadataDir, fdroidMetadataDir, liteMetadataDir]
+    metadataDirs = [playstoreMetadataDir, playstoreiapMetadataDir, fdroidMetadataDir, liteMetadataDir]
     for metadataDir in metadataDirs do
       FileUtils.cp(releaseNotePathDe, "#{metadataDir}de-DE/#{changeLogSubPath}")
       FileUtils.cp(releaseNotePathEn, "#{metadataDir}en-US/#{changeLogSubPath}")
@@ -110,6 +112,7 @@ platform :android do |options|
     checkTrackingAddedInDependencyUsingExodus(alpha:options[:alpha], beta:options[:beta], flavor: 'playstore')
 
     upload_to_play_store(
+      package_name: "org.cryptomator",
       track: deploy_target,
       apk: lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH],
       mapping: lane_context[SharedValues::GRADLE_MAPPING_TXT_OUTPUT_PATH],
@@ -125,6 +128,51 @@ platform :android do |options|
     )
 
     FileUtils.cp(lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH], "release/Cryptomator-#{version}_playstore_signed.apk")
+  end
+
+  desc "Deploy new IAP version to Play Store"
+  private_lane :deployToPlaystoreIap do |options|
+    deploy_target = "production"
+
+    if options[:alpha]
+      deploy_target = "alpha"
+    elsif options[:beta]
+       deploy_target = "beta"
+    end
+
+    gradle(task: "clean")
+
+    gradle(
+      tasks: ["assemblePlaystoreiapRelease", "bundlePlaystoreiapRelease"],
+      print_command: false,
+      properties: {
+        "android.injected.signing.store.file" => ENV["SIGNING_KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["SIGNING_KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["SIGNING_KEY_FREEMIUM_ALIAS"],
+        "android.injected.signing.key.password" => ENV["SIGNING_KEY_FREEMIUM_PASSWORD"],
+      }
+    )
+
+    checkTrackingAddedInDependencyUsingIzzyScript(alpha:options[:alpha], beta:options[:beta], flavor: 'playstoreiap')
+    checkTrackingAddedInDependencyUsingExodus(alpha:options[:alpha], beta:options[:beta], flavor: 'playstoreiap')
+
+    upload_to_play_store(
+      package_name: "org.cryptomator.freemium",
+      track: deploy_target,
+      aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH],
+      mapping: lane_context[SharedValues::GRADLE_MAPPING_TXT_OUTPUT_PATH],
+      version_name: version,
+      version_code: build,
+      release_status: "draft",
+      json_key: ENV["GOOGLE_PLAYSTORE_PRIVATE_KEY_FILE_PATH"],
+      skip_upload_apk: true,
+      skip_upload_metadata: false,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      metadata_path: "src/playstoreiap/fastlane/metadata/android/"
+    )
+
+    FileUtils.cp(lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH], "release/Cryptomator-#{version}_playstore_iap_signed.aab")
   end
 
   desc "Deploy new version to server"
@@ -299,7 +347,7 @@ platform :android do |options|
   desc "Deploy new lite version"
   private_lane :deployLite do |options|
     sh("docker build -t cryptomator-android ../buildsystem")
-    sh("docker run -u $(id -u):$(id -g) --rm -v $(cd .. && pwd):/project -w /project cryptomator-android ./gradlew clean assembleLiteRelease")
+    sh("docker run --userns=keep-id -u $(id -u):$(id -g) --rm -v $(cd .. && pwd):/project -w /project cryptomator-android ./gradlew clean assembleLiteRelease")
 
     sh("zipalign -v -p 4 ../presentation/build/outputs/apk/lite/release/presentation-lite-release-unsigned.apk presentation-lite-release-unsigned-aligned.apk")
     sh("apksigner sign --ks #{ENV["SIGNING_KEYSTORE_PATH"]} --ks-key-alias #{ENV["SIGNING_KEY_ALIAS"]} --ks-pass env:SIGNING_KEYSTORE_PASSWORD --key-pass env:SIGNING_KEY_PASSWORD --out release/Cryptomator-#{version}_lite_signed.apk presentation-lite-release-unsigned-aligned.apk")
@@ -453,6 +501,28 @@ platform :android do |options|
     checkTrackingAddedInDependencyUsingExodus(alpha:options[:alpha], beta:options[:beta], flavor: 'playstore')
 
     FileUtils.cp(lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH], "#{fluidattacks_apks_path}/Cryptomator-#{version}_playstore_signed/Cryptomator-#{version}_playstore_signed.apk")
+
+
+
+    gradle(task: "clean")
+
+    gradle(
+      task: "assemble",
+      build_type: "Release",
+      flavor: "playstoreiap",
+      print_command: false,
+      properties: {
+        "android.injected.signing.store.file" => ENV["SIGNING_KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["SIGNING_KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["SIGNING_KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["SIGNING_KEY_PASSWORD"],
+      }
+    )
+
+    checkTrackingAddedInDependencyUsingIzzyScript(alpha:options[:alpha], beta:options[:beta], flavor: 'playstoreiap')
+    checkTrackingAddedInDependencyUsingExodus(alpha:options[:alpha], beta:options[:beta], flavor: 'playstoreiap')
+
+    FileUtils.cp(lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH], "#{fluidattacks_apks_path}/Cryptomator-#{version}_playstoreiap_signed/Cryptomator-#{version}_playstoreiap_signed.apk")
 
     gradle(task: "clean")
 
